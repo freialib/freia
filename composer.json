@@ -1,5 +1,5 @@
 {
-	"name": "freia",
+	"name": "freia/autoloader",
 	"type": "library",
 	"description": "Tome of php server magic that you can add to any project",
 	"keywords": ["freialib"],

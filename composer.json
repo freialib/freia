@@ -1,6 +1,6 @@
 {
 	"name": "freia/autoloader",
-	"type": "library",
+	"type": "freia-module",
 	"description": "Tome of php server magic that you can add to any project",
 	"keywords": ["freialib"],
 	"homepage": "http://freialib.github.io/",

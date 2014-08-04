@@ -1,4 +1,4 @@
-<?php namespace freia;
+<?php namespace freia\autoloader;
 
 /**
  * @copyright (c) 2014, freia Team

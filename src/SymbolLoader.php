@@ -1,4 +1,4 @@
-<?php namespace freia;
+<?php namespace freia\autoloader;
 
 use \RecursiveDirectoryIterator;
 use \RecursiveIteratorIterator;

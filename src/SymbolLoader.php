@@ -1,8 +1,5 @@
 <?php namespace freia\autoloader;
 
-use \RecursiveDirectoryIterator;
-use \RecursiveIteratorIterator;
-
 /**
  * The freia cascading file system loader.
  *
@@ -21,6 +18,11 @@ class SymbolLoader {
 	 * @var array
 	 */
 	protected $env = null;
+
+	/**
+	 * @var boolean is the current environment a cache?
+	 */
+	protected $cachedEnv = false;
 
 	/**
 	 * @return static
@@ -47,10 +49,6 @@ class SymbolLoader {
 	 * @return boolean
 	 */
 	function load($symbol_name) {
-
-		// TODO (freia): remove debug code
-		// TODO (freia): add missing functionality
-		// TODO (freia): add tests
 
 		// normalize
 		$symbol = static::unn($symbol_name);
@@ -79,7 +77,7 @@ class SymbolLoader {
 						}
 						// shorthand namespace?
 						if ($module_ns != $ns) {
-							class_alias($modulesymbol, static::pnn($symbol));
+							$this->class_alias($modulesymbol, static::pnn($symbol));
 						}
 
 						return true;
@@ -91,10 +89,17 @@ class SymbolLoader {
 			return false;
 		}
 
+		// are we in a potentially invalid cached system?
+		if ($this->cachedEnv) {
+			$this->refreshEnvironment();
+			return $this->load($symbol_name);
+		}
+
 		return false;
 	}
 
 	/**
+	 * @codeCoverageIgnore
 	 * @return boolean success?
 	 */
 	function register($as_primary_autoloader = true) {
@@ -102,6 +107,7 @@ class SymbolLoader {
 	}
 
 	/**
+	 * @codeCoverageIgnore
 	 * @return boolean success?
 	 */
 	function unregister() {
@@ -126,6 +132,7 @@ class SymbolLoader {
 
 // ---- Private ---------------------------------------------------------------
 
+
 	/**
 	 * Universal Namespace Name
 	 * Accepts both classes, classes with namespace, etc.
@@ -148,6 +155,23 @@ class SymbolLoader {
 	}
 
 	/**
+	 * @return \SplFileInfo[]
+	 */
+	protected function find_file($searchedfile, $searchpath, $maxdepth = -1) {
+		$dirIterator = new \RecursiveDirectoryIterator($searchpath);
+		$i = new \RecursiveIteratorIterator($dirIterator);
+		$i->setMaxDepth($maxdepth);
+		$files = [];
+		foreach ($i as $file) {
+			if ($file->getFilename() == $searchedfile) {
+				$files[] = $file;
+			}
+		}
+
+		return $files;
+	}
+
+	/**
 	 * Setup the CFS structure based on the environment.
 	 */
 	protected function setup($env) {
@@ -156,14 +180,42 @@ class SymbolLoader {
 			throw new Panic('The autoloader can not handle non-array environments.');
 		}
 
+		$this->rawEnvironment = $env;
+
+		$cached_settings = $this->retrieveCachedSettings($env);
+		if ($cached_settings !== null) {
+			$this->env = $cached_settings;
+			$this->cachedEnv = true;
+			return;
+		}
+
+		$this->refreshEnvironment();
+	}
+
+	/**
+	 * Invalidates the current environment and recalculate.
+	 */
+	protected function refreshEnvironment() {
+
+		// load in original environment configuration
+		$env = $this->rawEnvironment;
+
 		$cfsconfs = [];
 		if (isset($env['load'])) {
+
+			if (isset($env['depth'])) {
+				$maxdepth = (int) $env['depth'];
+			}
+			else { // depth not set
+				$maxdepth = $this->defaultDepth();
+			}
+
 			foreach ($env['load'] as $path) {
 				$loadpath = "{$this->systempath}/$path";
-				$files = $this->find_file('composer.json', $loadpath);
+				$files = $this->find_file('composer.json', $loadpath, $maxdepth);
 				// find the cfs configs
 				foreach ($files as $file) {
-					$composerjson = json_decode(file_get_contents($file->getRealPath()), true);
+					$composerjson = json_decode($this->file_get_contents($file->getRealPath()), true);
 					if ($this->composer_has_cfsinfo($composerjson)) {
 						$confname = static::unn($composerjson['name']).'.';
 						$cfsconfs[$confname] = [];
@@ -173,7 +225,223 @@ class SymbolLoader {
 			}
 		}
 
+		$this->cachedEnv = false;
 		$this->env = $cfsconfs;
+		$this->saveStateToCache($env);
+	}
+
+	/**
+	 * @return array|null environment or null
+	 */
+	protected function retrieveCachedSettings($env) {
+		$prefix = $this->cachePrefix();
+		if (isset($env['cache.dir'])) {
+			$cachedir = rtrim($this->systempath.'/'.$env['cache.dir'], '/\\');
+			if ($this->file_exists($cachedir)) {
+
+				// Load depth cache
+				// ----------------
+
+				$cacheDepth = null;
+				$cachefile = "$cachedir/$prefix.meta.cache";
+				if ($this->file_exists($cachefile)) {
+					$jsonstr = $this->file_get_contents($cachefile);
+					if ($jsonstr !== false) {
+						$meta = json_decode($jsonstr, true);
+						if ( ! empty($meta)) {
+							if (isset($meta['depth'])) {
+								$cacheDepth = (int) $meta['depth'];
+							}
+						}
+						else { // failed to parse cached settings
+							$classKey = $this->unn(get_class());
+							$this->error_log("[$classKey] Cached meta could not be parsed");
+							// meta cache is REQUIRED for proper cache checks
+							return null; # failed to retrieve cache
+						}
+					}
+					else { // failed to read cache file
+						$classKey = $this->unn(get_class());
+						$this->error_log("[$classKey] Cached meta could not be read");
+						// meta cache is REQUIRED for proper cache checks
+						return null; # failed to retrieve cache
+					}
+				}
+
+				// Verify Cache
+				// ------------
+
+				if ($cacheDepth !== null) {
+					if (isset($env['depth'])) {
+						$envDepth = (int) $env['depth'];
+					}
+					else { // not specified
+						$envDepth = $this->defaultDepth();
+					}
+
+					if ($cacheDepth != $envDepth) {
+
+						# We need to invalidate a cache if the depth is wrong
+						# because if we don't when a cache invalidation happens
+						# everything will just "seem" to break randomly due to
+						# calculations under the new cache not giving anything
+						# close to the old cache; this actually fails both
+						# ways due to potential bad overwrites from previously
+						# unmatched modules—so both lower and higher are risks
+
+						return null; // controlled cache invalidation
+					}
+				}
+
+				// Attempt to load environment
+				// ---------------------------
+
+				$cachefile = "$cachedir/$prefix.cfsconfs.cache";
+				if ($this->file_exists($cachefile)) {
+					$jsonstr = $this->file_get_contents($cachefile);
+					if ($jsonstr !== false) {
+						$cached_settings = json_decode($jsonstr, true);
+						if ( ! empty($cached_settings)) {
+							return $cached_settings;
+						}
+						else { // failed to parse cached settings
+							$classKey = $this->unn(get_class());
+							$this->error_log("[$classKey] Cached settings could not be parsed");
+							return null;
+						}
+					}
+					else { // failed to read cache file
+						$classKey = $this->unn(get_class());
+						$this->error_log("[$classKey] Cached settings could not be read");
+						return null;
+					}
+				}
+			}
+			else { // mentioned dir does not exist
+				$classKey = $this->unn(get_class());
+				$this->error_log("[$classKey] Cache dir does not exist: $cachedir");
+				return null;
+			}
+		}
+		else { // no cache.dir provided
+			$classKey = $this->unn(get_class());
+			$this->error_log("[$classKey] It is highly recomended to provide cache.dir key in your environement config.");
+			return null;
+		}
+	}
+
+	/**
+	 * Save the current state to cache
+	 */
+	protected function saveStateToCache($env) {
+		$prefix = $this->cachePrefix();
+		if (isset($env['cache.dir'])) {
+			$cachedir = rtrim($this->systempath.'/'.$env['cache.dir'], '/\\');
+			if ($this->file_exists($cachedir)) {
+
+				// Save Meta
+				// ---------
+
+				$meta = [];
+				if (isset($env['depth'])) {
+					$meta['depth'] = $env['depth'];
+				}
+				else { // depth not set
+					$meta['depth'] = $this->defaultDepth();
+				}
+
+				$cachefile = "$cachedir/$prefix.meta.cache";
+				$jsonstr = json_encode($meta, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+				// does the file exist?
+				if ( ! $this->file_exists($cachefile)) {
+					// ensure the file exists
+					if ( ! ($this->file_put_contents($cachefile, $jsonstr) !== false)) {
+						$classKey = $this->unn(get_class());
+						$this->error_log("[$classKey] Unable to write: $cachefile");
+						return;
+					}
+					// ensure the permissions are right
+					if ( ! $this->chmod($cachefile, $this->filePermission())) {
+						$classKey = $this->unn(get_class());
+						$this->error_log("[$classKey] Unable to set permissions on cache file: $cachefile");
+						return;
+					}
+				}
+				else { // a file already exists
+					if ( ! ($this->file_put_contents($cachefile, $jsonstr) !== false)) {
+						$classKey = $this->unn(get_class());
+						$this->error_log("[$classKey] Unable to writeover: $cachefile");
+						return;
+					}
+				}
+
+				// Save Environment
+				// ----------------
+
+				$cachefile = "$cachedir/$prefix.cfsconfs.cache";
+				$jsonstr = json_encode($this->env, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+				// does the file exist?
+				if ( ! $this->file_exists($cachefile)) {
+					// ensure the file exists
+					if ( ! ($this->file_put_contents($cachefile, $jsonstr) !== false)) {
+						$classKey = $this->unn(get_class());
+						$this->error_log("[$classKey] Unable to write: $cachefile");
+						return;
+					}
+					// ensure the permissions are right
+					if ( ! $this->chmod($cachefile, $this->filePermission())) {
+						$classKey = $this->unn(get_class());
+						$this->error_log("[$classKey] Unable to set permissions on cache file: $cachefile");
+						return;
+					}
+				}
+				else { // a file already exists
+					if ( ! ($this->file_put_contents($cachefile, $jsonstr) !== false)) {
+						$classKey = $this->unn(get_class());
+						$this->error_log("[$classKey] Unable to writeover: $cachefile");
+						return;
+					}
+				}
+			}
+			else { // mentioned dir does not exist
+				$classKey = $this->unn(get_class());
+				$this->error_log("[$classKey] Cache dir does not exist: $cachedir");
+				return;
+			}
+		}
+	}
+
+	/**
+	 * If a depth is specified in the module configuration this value is
+	 * overwritten by the environment value. It's important to note that
+	 * cache does depend on this value! So a cache for depth 4 will become
+	 * invalid imediatly if depth is changed to 5 or 3 or any other number.
+	 *
+	 * @return int the maximum depth a module search will run to
+	 */
+	protected function defaultDepth() {
+		return 3;
+	}
+
+	/**
+	 * @return string
+	 */
+	protected function cachePrefix() {
+		return 'freia';
+	}
+
+	/**
+	 * @return int
+	 */
+	protected function filePermission() {
+		return 0664;
+	}
+
+	/**
+	 * @return int
+	 */
+	protected function dirPermission() {
+		return 0775;
 	}
 
 	/**
@@ -184,24 +452,11 @@ class SymbolLoader {
 			&& $json['type'] == 'freia-module';
 	}
 
-	/**
-	 * @return \SplFileInfo[]
-	 */
-	protected function find_file($searchedfile, $searchpath) {
-		$dir = new RecursiveDirectoryIterator($searchpath);
-		$i = new RecursiveIteratorIterator($dir);
-		$files = [];
-		foreach($i as $file) {
-			if ($file->getFilename() == $searchedfile) {
-				$files[] = $file;
-			}
-		}
-
-		return $files;
-	}
+// ---- Test Hooks ------------------------------------------------------------
 
 	/**
 	 * Testing hook.
+	 * @codeCoverageIgnore
 	 */
 	protected function requirefile($symbolfile) {
 		require $symbolfile;
@@ -209,9 +464,54 @@ class SymbolLoader {
 
 	/**
 	 * Testing hook.
+	 * @codeCoverageIgnore
 	 */
 	protected function file_exists($file) {
 		return file_exists($file);
+	}
+
+	/**
+	 * Testing hook.
+	 * @codeCoverageIgnore
+	 * @return mixed
+	 */
+	protected function file_get_contents($file) {
+		return file_get_contents($file);
+	}
+
+	/**
+	 * Testing hook.
+	 * @codeCoverageIgnore
+	 * @return int
+	 */
+	protected function file_put_contents($file, $data, $flags = 0) {
+		return file_put_contents($file, $data, $flags);
+	}
+
+	/**
+	 * Testing hook.
+	 * @codeCoverageIgnore
+	 */
+	protected function error_log($message) {
+		error_log($message);
+	}
+
+	/**
+	 * Testing hook.
+	 * @codeCoverageIgnore
+	 * @return boolean
+	 */
+	protected function class_alias($class, $alias) {
+		return class_alias($class, $alias);
+	}
+
+	/**
+	 * Testing hook.
+	 * @codeCoverageIgnore
+	 * @return boolean
+	 */
+	protected function chmod($filepath, $mode) {
+		return chmod($filepath, $mode);
 	}
 
 } # class

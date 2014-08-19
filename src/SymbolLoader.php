@@ -20,9 +20,19 @@ class SymbolLoader {
 	protected $env = null;
 
 	/**
+	 * @var array
+	 */
+	protected $env_names = null;
+
+	/**
 	 * @var boolean is the current environment a cache?
 	 */
 	protected $cachedEnv = false;
+
+	/**
+	 * @var string
+	 */
+	protected $lastsymbol = null;
 
 	/**
 	 * @return static
@@ -52,10 +62,47 @@ class SymbolLoader {
 
 		// normalize
 		$symbol = static::unn($symbol_name);
+		$this->lastsymbol = null;
 
 		// get components
 		if (($ns_pos = strripos($symbol, '.')) !== false) {
+
 			$ns = substr($symbol, 0, $ns_pos + 1);
+
+			// Validate Main Segment
+			// ---------------------
+
+			$firstdot = strpos($ns, '.');
+			if ($firstdot !== false) {
+				$mainsegment = substr($ns, 0, $firstdot);
+				if ( ! in_array($mainsegment, $this->env_names)) {
+					if ($this->cachedEnv) {
+						$this->refreshEnvironment();
+						return $this->load($symbol_name);
+					}
+					else { // not cachedEnv
+						// failed due to being unknown namespace
+						return false;
+					}
+				}
+			}
+			else { // no . in namespace
+				// the namespace is the main segment itself
+				if ( ! in_array($ns, $this->env_names)) {
+					if ($this->cachedEnv) {
+						$this->refreshEnvironment();
+						return $this->load($symbol_name);
+					}
+					else { // not cachedEnv
+						// failed due to being unknown namespace
+						return false;
+					}
+				}
+			}
+
+			// Continue Loading Process
+			// ------------------------
+
 			$name = substr($symbol, $ns_pos + 1);
 			$filename = str_replace('_', '/', $name);
 			$dirbreak = strlen($name) - strcspn(strrev($name), 'ABCDEFGHJIJKLMNOPQRSTUVWXYZ') - 1;
@@ -67,21 +114,72 @@ class SymbolLoader {
 				$filename = $name;
 			}
 
-			foreach ($this->env as $module_ns => $conf) {
-				if (strripos($module_ns, $ns) !== false) {
-					$symbolfile = "{$conf['path']}/src/$filename.php";
-					if ($this->file_exists($symbolfile)) {
-						$modulesymbol = static::pnn("$module_ns$name");
-						if ( ! static::exists($modulesymbol)) {
-							$this->requirefile($symbolfile);
+			$nextPtr = strrpos($ns, '.next.');
+			if ($nextPtr === false) {
+
+				// Regular namespace
+				// -----------------
+
+				foreach ($this->env as $module_ns => $conf) {
+					$offset = strripos($module_ns, $ns);
+					if (strripos($module_ns, $ns) !== false) {
+						$symbolfile = "{$conf['path']}/src/$filename.php";
+						if ($this->file_exists($symbolfile)) {
+							$modulesymbol = static::pnn("$module_ns$name");
+							if ( ! static::exists($modulesymbol)) {
+								$this->requirefile($symbolfile);
+							}
+
+							$this->lastsymbol = $modulesymbol;
+
+							// shorthand namespace?
+							if ($module_ns != $ns) {
+								$this->class_alias($modulesymbol, static::pnn($symbol));
+							}
+
+							return true;
 						}
-						// shorthand namespace?
-						if ($module_ns != $ns) {
-							$this->class_alias($modulesymbol, static::pnn($symbol));
+					}
+				}
+			}
+			else { // ".next." is present in string
+
+				// Handling for "next" keyword
+				// ---------------------------
+
+				$skipPoint = substr($ns, 0, $nextPtr + 1);
+				$targetNs = substr($ns, $nextPtr + 6); // strlen('.next.') = 6
+
+				$skipped = false;
+				foreach ($this->env as $module_ns => $conf) {
+
+					if ( ! $skipped) {
+						if ($module_ns == $skipPoint) {
+							$skipped = true;
 						}
 
-						return true;
+						continue;
 					}
+
+					if (strripos($module_ns, $targetNs) !== false) {
+						$symbolfile = "{$conf['path']}/src/$filename.php";
+						if ($this->file_exists($symbolfile)) {
+							$modulesymbol = static::pnn("$module_ns$name");
+							if ( ! static::exists($modulesymbol)) {
+								$this->requirefile($symbolfile);
+							}
+
+							$this->lastsymbol = $modulesymbol;
+
+							// shorthand namespace?
+							if ($module_ns != $targetNs) {
+								$this->class_alias($modulesymbol, static::pnn($symbol));
+							}
+
+							return true;
+						}
+					}
+
 				}
 			}
 		}
@@ -131,7 +229,6 @@ class SymbolLoader {
 	}
 
 // ---- Private ---------------------------------------------------------------
-
 
 	/**
 	 * Universal Namespace Name
@@ -185,11 +282,31 @@ class SymbolLoader {
 		$cached_settings = $this->retrieveCachedSettings($env);
 		if ($cached_settings !== null) {
 			$this->env = $cached_settings;
+			$this->rebuildValidationData();
 			$this->cachedEnv = true;
 			return;
 		}
 
 		$this->refreshEnvironment();
+	}
+
+	/**
+	 * Generates validation cache based on current environment.
+	 */
+	protected function rebuildValidationData() {
+		$this->env_names = [];
+		foreach (array_keys($this->env) as $module_ns) {
+			$dotpos = strpos($module_ns, '.');
+			if ($dotpos !== false) {
+				$ns = substr($module_ns, 0, $dotpos);
+			}
+			else { // this should not happen; but just in case
+				$ns = $module_ns;
+			}
+			if ( ! in_array($ns, $this->env_names)) {
+				$this->env_names[] = $ns;
+			}
+		}
 	}
 
 	/**
@@ -201,6 +318,7 @@ class SymbolLoader {
 		$env = $this->rawEnvironment;
 
 		$cfsconfs = [];
+
 		if (isset($env['load'])) {
 
 			if (isset($env['depth'])) {
@@ -227,6 +345,7 @@ class SymbolLoader {
 
 		$this->cachedEnv = false;
 		$this->env = $cfsconfs;
+		$this->rebuildValidationData();
 		$this->saveStateToCache($env);
 	}
 

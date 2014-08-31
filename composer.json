@@ -4,7 +4,7 @@
 	"description": "Tome of php server magic that you can add to any project",
 	"keywords": ["freialib"],
 	"homepage": "http://freialib.github.io/",
-	"license": "BSD-2",
+	"license": "BSD-2-Clause",
 	"require": {
 		"php": ">=5.4.10"
 	},

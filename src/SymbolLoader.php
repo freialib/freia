@@ -35,12 +35,32 @@ class SymbolLoader {
 	protected $lastsymbol = null;
 
 	/**
+	 * @var boolean accept debug modules?
+	 */
+	protected $debugMode = false;
+
+	/**
+	 * You may set debugMode to true to use debug modules, otherwise if modules
+	 * with a debug type in the autoload rules section are found they will be
+	 * ignored.
+	 *
 	 * @return static
 	 */
-	static function instance($systempath, $environment) {
+	static function instance($systempath, $environment, $debugMode = false) {
+
 		$i = new static;
+
+		// Pre-Setup variables
+		// -------------------
+
+		$i->debugMode = $debugMode;
 		$i->systempath = $systempath;
+
+		// Setup Environment
+		// -----------------
+
 		$i->setup($environment);
+
 		return $i;
 	}
 
@@ -281,6 +301,7 @@ class SymbolLoader {
 
 		$cached_settings = $this->retrieveCachedSettings($env);
 		if ($cached_settings !== null) {
+			$cached_settings = static::applyRules($cached_settings, $this->debugMode);
 			$this->env = $cached_settings;
 			$this->rebuildValidationData();
 			$this->cachedEnv = true;
@@ -335,19 +356,166 @@ class SymbolLoader {
 				foreach ($files as $file) {
 					$composerjson = json_decode($this->file_get_contents($file->getRealPath()), true);
 					if ($this->composer_has_cfsinfo($composerjson)) {
+
 						$confname = static::unn($composerjson['name']).'.';
 						$cfsconfs[$confname] = [];
 						$cfsconfs[$confname]['path'] = $file->getPath();
+
+						if (isset($composerjson['autoload'], $composerjson['autoload']['freia'], $composerjson['autoload']['freia']['rules'])) {
+							$cfsconfs[$confname]['rules'] = $composerjson['autoload']['freia']['rules'];
+						}
+						else { // no special rules
+							$cfsconfs[$confname]['rules'] = [ 'identity' => [] ];
+						}
+
+						if ( ! isset($cfsconfs[$confname]['rules']['identity'])) {
+							$cfsconfs[$confname]['rules']['identity'] = [];
+						}
 					}
 				}
 			}
 		}
+
+		$cfsconfs = static::applyRules($cfsconfs, $this->debugMode);
 
 		$this->cachedEnv = false;
 		$this->env = $cfsconfs;
 		$this->rebuildValidationData();
 		$this->saveStateToCache($env);
 	}
+
+	/**
+	 * Applies module rules.
+	 *
+	 * @return array
+	 */
+	protected static function applyRules($cfsconfs, $debugMode) {
+
+		// Enforce Debug Mode Settings
+		// ---------------------------
+
+		# if a module has type defined and has debug in her type and we are
+		# not in debug mode then the module is removed from the environment
+
+		if ( ! $debugMode) {
+			$updated_cfsconfs = $cfsconfs;
+			foreach ($cfsconfs as $module => $conf) {
+				if (in_array('debug', $conf['rules']['identity'])) {
+					unset($updated_cfsconfs[$module]);
+				}
+			}
+			$cfsconfs = $updated_cfsconfs;
+		}
+
+		// Create a indexed array of modules
+		// ---------------------------------
+
+		$modules = [];
+		$idx = 0;
+		foreach ($cfsconfs as $modulename => $conf) {
+			$modules[$modulename] = $idx += 1;
+		}
+
+		// Create Rules array
+		// ------------------
+
+		$rules = [];
+		foreach ($cfsconfs as $module => $conf) {
+			$rules[$module] = $conf['rules'];
+		}
+
+		// Apply Stacking Rules
+		// --------------------
+
+		$iteration = 0;
+		do {
+
+			// Sanity Check
+			// ------------
+
+			# it's entirely poissible for recursive rules to be applied, so we
+			# need to have a stop mechanism; the system will try to function
+			# even if recursion is detected; but a warning will be shown
+
+			$iteration += 1;
+			if ($iteration == 1000) {
+				$classKey = $this->unn(get_class());
+				$this->error_log("[$classKey] Exceeded maximum rule iteration count; potentially recursive module ruleset");
+				break;
+			}
+
+			$ordered = true;
+			$ordered_modules = $modules;
+
+			// Check for [matches-before] constraint
+			// =====================================
+
+			foreach (array_keys($modules) as $module) {
+				if (isset($rules[$module]['matches-before'])) {
+					foreach ($rules[$module]['matches-before'] as $target) {
+
+						# stack-after: this module recieves idx of top
+						# matching target -1 and all other modules aside from
+						# this module who have idx < target idx recieve -1,
+						# all entries with idx > old module idx recieve -1; if
+						# target is not found in the modules or if the idx is
+						# already smaller then the entire operation is skipped
+						# and everyting retains their current idx
+
+						$targetmodulename = static::firstMatchingModule(array_keys($ordered_modules), $target);
+						if ($targetmodulename !== null) {
+							$target_idx = $ordered_modules[$targetmodulename];
+							if ($target_idx < $ordered_modules[$module]) {
+
+								$updated_modules = $ordered_modules;
+								$old_module_idx = $updated_modules[$module];
+								$updated_modules[$module] = $updated_modules[$targetmodulename] - 1;
+
+								foreach ($ordered_modules as $k => $idx) {
+									if ($idx < $target_idx && $k != $module) {
+										$updated_modules[$k] = $idx - 1;
+									}
+									else if ($idx > $old_module_idx) {
+										$updated_modules[$k] = $idx - 1;
+									}
+								}
+
+								asort($updated_modules);
+								$ordered_modules = $updated_modules;
+								$ordered = false;
+							}
+						}
+					}
+				}
+			}
+
+			$modules = $ordered_modules;
+		}
+		while ( ! $ordered);
+
+		// Integrate updated order
+		// -----------------------
+
+		$updated_cfsconfs = [];
+		foreach ($modules as $modulename => $idx) {
+			$updated_cfsconfs[$modulename] = $cfsconfs[$modulename];
+		}
+
+		return $updated_cfsconfs;
+	}
+
+	/**
+	 * @return string name
+	 */
+	protected static function firstMatchingModule($module_names, $target) {
+		foreach ($module_names as $module) {
+			if (stripos($module, $target) !== false) {
+				return $module;
+			}
+		}
+	}
+
+// ---- Caching ---------------------------------------------------------------
 
 	/**
 	 * @return array|null environment or null
@@ -421,7 +589,16 @@ class SymbolLoader {
 					if ($jsonstr !== false) {
 						$cached_settings = json_decode($jsonstr, true);
 						if ( ! empty($cached_settings)) {
-							return $cached_settings;
+
+							# cached settings may become invalid between
+							# updates so we need to re-check their validity
+
+							if ($this->validCachedSettings($cached_settings)) {
+								return $cached_settings;
+							}
+							else { // invalid cached settings
+								return null;
+							}
 						}
 						else { // failed to parse cached settings
 							$classKey = $this->unn(get_class());
@@ -447,6 +624,22 @@ class SymbolLoader {
 			$this->error_log("[$classKey] It is highly recomended to provide cache.dir key in your environement config.");
 			return null;
 		}
+	}
+
+	/**
+	 * @return boolean valid cached settings?
+	 */
+	protected function validCachedSettings($settings) {
+		foreach ($settings as $module => $entry) {
+			if ( ! isset($entry['path'])) {
+				return false;
+			}
+			if ( ! isset($entry['rules']) || ! isset($entry['rules']['identity'])) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**

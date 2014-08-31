@@ -361,8 +361,8 @@ class SymbolLoader {
 						$cfsconfs[$confname] = [];
 						$cfsconfs[$confname]['path'] = $file->getPath();
 
-						if (isset($composerjson['autoload'], $composerjson['autoload']['freia'], $composerjson['autoload']['freia']['rules'])) {
-							$cfsconfs[$confname]['rules'] = $composerjson['autoload']['freia']['rules'];
+						if (isset($composerjson['extra'], $composerjson['extra']['freia'], $composerjson['extra']['freia']['rules'])) {
+							$cfsconfs[$confname]['rules'] = $composerjson['extra']['freia']['rules'];
 						}
 						else { // no special rules
 							$cfsconfs[$confname]['rules'] = [ 'identity' => [] ];

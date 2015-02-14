@@ -35,16 +35,16 @@ class SymbolLoaderTester extends \freia\autoloader\SymbolLoader {
 	}
 
 	public $mkFileExists = [
-		'rootpath:/files/cache',
-		'rootpath:/package_1/module5.system.super.core.module6.system.core/src/Example1.php',
-		'rootpath:/package_1/module0.module2/src/Example1.php',
-		'rootpath:/package_1/module1.system.legacysupport/src/Example1.php',
-		'rootpath:/package_1/module1.system.core/src/Example1.php',
-		'rootpath:/package_1/module1.system.core/src/Example2.php',
-		'rootpath:/package_2/module1.tools/src/Example1.php',
-		'rootpath:/package_2/module2.system/src/Example1.php',
-		'rootpath:/package_2/module3.system/src/Example1.php',
-		'rootpath:/package_2/module3.system/src/Example3.php',
+		'syspath:/files/cache',
+		'syspath:/package_1/module5.system.super.core.module6.system.core/src/Example1.php',
+		'syspath:/package_1/module0.module2/src/Example1.php',
+		'syspath:/package_1/module1.system.legacysupport/src/Example1.php',
+		'syspath:/package_1/module1.system.core/src/Example1.php',
+		'syspath:/package_1/module1.system.core/src/Example2.php',
+		'syspath:/package_2/module1.tools/src/Example1.php',
+		'syspath:/package_2/module2.system/src/Example1.php',
+		'syspath:/package_2/module3.system/src/Example1.php',
+		'syspath:/package_2/module3.system/src/Example3.php',
 	];
 
 	protected function file_exists($file) {
@@ -53,56 +53,56 @@ class SymbolLoaderTester extends \freia\autoloader\SymbolLoader {
 	}
 
 	public $mkFileContents = [
-		'rootpath:/package_1/module6.demo/composer.json' =>
+		'syspath:/package_1/module6.demo/composer.json' =>
 			'
 				{
 					"name": "module6/demo",
 					"type": "freia-module"
 				}
 			',
-		'rootpath:/package_1/module5.system.super.core.module6.system.core/composer.json' =>
+		'syspath:/package_1/module5.system.super.core.module6.system.core/composer.json' =>
 			'
 				{
 					"name": "module5/system/super/core/module6/system/core",
 					"type": "freia-module"
 				}
 			',
-		'rootpath:/package_1/module0.module2/composer.json' =>
+		'syspath:/package_1/module0.module2/composer.json' =>
 			'
 				{
 					"name": "module0/module2",
 					"type": "freia-module"
 				}
 			',
-		'rootpath:/package_1/module1.system.legacysupport/composer.json' =>
+		'syspath:/package_1/module1.system.legacysupport/composer.json' =>
 			'
 				{
 					"name": "module1/system/legacysupport",
 					"type": "freia-module"
 				}
 			',
-		'rootpath:/package_1/module1.system.core/composer.json' =>
+		'syspath:/package_1/module1.system.core/composer.json' =>
 			'
 				{
 					"name": "module1/system/core",
 					"type": "freia-module"
 				}
 			',
-		'rootpath:/package_2/module1.tools/composer.json' =>
+		'syspath:/package_2/module1.tools/composer.json' =>
 			'
 				{
 					"name": "module1/tools",
 					"type": "freia-module"
 				}
 			',
-		'rootpath:/package_2/module2.system/composer.json' =>
+		'syspath:/package_2/module2.system/composer.json' =>
 			'
 				{
 					"name": "module2/system",
 					"type": "freia-module"
 				}
 			',
-		'rootpath:/package_2/module3.system/composer.json' =>
+		'syspath:/package_2/module3.system/composer.json' =>
 			'
 				{
 					"name": "module3/system",
@@ -153,17 +153,17 @@ class SymbolLoaderTester extends \freia\autoloader\SymbolLoader {
 
 	protected function mkFileSearches() {
 		return [
-			'composer.json | rootpath:/package_1' => [
-				MockFile::i('rootpath:/package_1/module6.demo/composer.json'),
-				MockFile::i('rootpath:/package_1/module5.system.super.core.module6.system.core/composer.json'),
-				MockFile::i('rootpath:/package_1/module0.module2/composer.json'),
-				MockFile::i('rootpath:/package_1/module1.system.legacysupport/composer.json'),
-				MockFile::i('rootpath:/package_1/module1.system.core/composer.json')
+			'composer.json | syspath:/package_1' => [
+				MockFile::i('syspath:/package_1/module6.demo/composer.json'),
+				MockFile::i('syspath:/package_1/module5.system.super.core.module6.system.core/composer.json'),
+				MockFile::i('syspath:/package_1/module0.module2/composer.json'),
+				MockFile::i('syspath:/package_1/module1.system.legacysupport/composer.json'),
+				MockFile::i('syspath:/package_1/module1.system.core/composer.json')
 			],
-			'composer.json | rootpath:/package_2' => [
-				MockFile::i('rootpath:/package_2/module1.tools/composer.json'),
-				MockFile::i('rootpath:/package_2/module2.system/composer.json'),
-				MockFile::i('rootpath:/package_2/module3.system/composer.json')
+			'composer.json | syspath:/package_2' => [
+				MockFile::i('syspath:/package_2/module1.tools/composer.json'),
+				MockFile::i('syspath:/package_2/module2.system/composer.json'),
+				MockFile::i('syspath:/package_2/module3.system/composer.json')
 			]
 		];
 	}
@@ -199,7 +199,7 @@ class SymbolLoaderTest extends \PHPUnit_Framework_TestCase {
 	/** @test */ function
 	load() {
 
-		$loader = SymbolLoaderTester::instance('rootpath:', [
+		$loader = SymbolLoaderTester::instance('syspath:', [
 			'cache.dir' => 'files/cache',
 			'load' => ['package_0', 'package_1', 'package_2', 'package_3']
 		]);

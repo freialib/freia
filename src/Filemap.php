@@ -44,7 +44,9 @@ class Filemap implements \hlin\archetype\Filemap {
 			$found = false;
 			$config = [];
 
-			foreach ($paths as $envpath) {
+			$confSearchPaths = array_reverse($paths, true);
+
+			foreach ($confSearchPaths as $envpath) {
 				if ($fs->file_exists("$envpath//$path")) {
 					$found = true;
 					$this->merge($config, $this->_include("$envpath/$path"));

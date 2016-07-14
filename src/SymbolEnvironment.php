@@ -650,7 +650,11 @@ class SymbolEnvironment {
 	 * @codeCoverageIgnore
 	 */
 	protected function requirefile($symbolfile) {
-		require $symbolfile;
+		# the _once version is required here to avoid hard to debug cache bugs
+		# where the class may be loaded in due to a cache hit
+		require_once $symbolfile;
+		# using realpath is not required; require_once can tell if it's the 
+		# same file regardless of the actual file path provided
 	}
 
 	/**
